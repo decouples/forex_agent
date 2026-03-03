@@ -1,0 +1,171 @@
+"""
+智能体协作接口（对外暴露）
+=========================
+本模块用于给“其他智能体”调用本外汇智能体能力，属于 in-process SDK 接口。
+
+典型协作场景：
+- 客服智能体：询问“美元兑人民币近期走势如何？”
+- 投研智能体：拿结构化预测结果做下游决策
+- 报警智能体：定时读取实时汇率并触发阈值告警
+"""
+
+from __future__ import annotations
+from typing import Any, TypedDict
+from src.forex_service import ForexService
+from src.graph import build_forex_graph
+from src.logging_utils import get_logger
+
+logger = get_logger(__name__)
+
+
+class ForexRunRequest(TypedDict, total=False):
+    """其他智能体调用本智能体时的请求结构。"""
+
+    base_currency: str
+    target_currency: str
+    history_days: int
+    forecast_days: int
+    caller_agent: str
+    caller_task_id: str
+
+
+class ForexRunResponse(TypedDict):
+    """本智能体返回给其他智能体的标准响应。"""
+
+    ok: bool
+    request: dict[str, Any]
+    realtime: dict[str, Any]
+    history_records: list[dict[str, Any]]
+    analysis: dict[str, Any]
+    forecast: dict[str, Any]
+    report: str
+    node_timings: dict[str, float]
+    error: str
+
+
+class ForexAgentCollaborationAPI:
+    """
+    对外协作 API。
+    其他智能体不需要了解 LangGraph 细节，只要调用本类方法即可。
+    """
+
+    def __init__(self) -> None:
+        self._graph = build_forex_graph()
+        self._forex_service = ForexService()
+
+    def get_realtime_quote(self, base_currency: str, target_currency: str) -> dict[str, Any]:
+        """
+        面向其他智能体的轻量接口：只取实时汇率。
+        """
+        logger.info(
+            "collab_call | method=get_realtime_quote | base=%s | target=%s",
+            base_currency,
+            target_currency,
+        )
+        quote = self._forex_service.get_realtime_quote(base_currency=base_currency, target_currency=target_currency)
+        return {
+            "base_currency": base_currency,
+            "target_currency": target_currency,
+            "rate": quote["rate"],
+            "date": quote["date"],
+        }
+
+    def run_full_analysis(self, request: ForexRunRequest) -> ForexRunResponse:
+        """
+        面向其他智能体的完整分析接口（实时 + 历史分析 + 趋势预测 + 报告）。
+        """
+        base = request.get("base_currency", "USD").upper()
+        target = request.get("target_currency", "CNY").upper()
+        history_days = int(request.get("history_days", 90))
+        forecast_days = int(request.get("forecast_days", 30))
+
+        logger.info(
+            "collab_call | method=run_full_analysis | caller=%s | task_id=%s | pair=%s/%s | history_days=%s | forecast_days=%s",
+            request.get("caller_agent", "unknown"),
+            request.get("caller_task_id", "na"),
+            base,
+            target,
+            history_days,
+            forecast_days,
+        )
+
+        try:
+            result = self._graph.invoke(
+                {
+                    "base_currency": base,
+                    "target_currency": target,
+                    "history_days": history_days,
+                    "forecast_days": forecast_days,
+                }
+            )
+            response: ForexRunResponse = {
+                "ok": True,
+                "request": {
+                    "base_currency": base,
+                    "target_currency": target,
+                    "history_days": history_days,
+                    "forecast_days": forecast_days,
+                    "caller_agent": request.get("caller_agent", "unknown"),
+                    "caller_task_id": request.get("caller_task_id", "na"),
+                },
+                "realtime": {
+                    "rate": result.get("realtime_rate"),
+                    "date": result.get("realtime_date"),
+                },
+                "history_records": result.get("history_records", []),
+                "analysis": result.get("analysis", {}),
+                "forecast": result.get("forecast", {}),
+                "report": result.get("report", ""),
+                "node_timings": result.get("node_timings", {}),
+                "error": "",
+            }
+            logger.info(
+                "collab_return | method=run_full_analysis | ok=true | report_len=%s",
+                len(response["report"]),
+            )
+            return response
+        except Exception as exc:
+            logger.exception("collab_return | method=run_full_analysis | ok=false")
+            return {
+                "ok": False,
+                "request": dict(request),
+                "realtime": {},
+                "history_records": [],
+                "analysis": {},
+                "forecast": {},
+                "report": "",
+                "node_timings": {},
+                "error": str(exc),
+            }
+
+    def build_customer_agent_context(self, request: ForexRunRequest) -> dict[str, Any]:
+        """
+        给“客服智能体”提供标准上下文：
+        - user_facing_summary: 客服可直接复述
+        - structured_payload: 客服可做二次加工
+        """
+        result = self.run_full_analysis(request)
+        if not result["ok"]:
+            return {
+                "ok": False,
+                "user_facing_summary": f"外汇分析暂时不可用：{result['error']}",
+                "structured_payload": result,
+            }
+
+        forecast = result["forecast"]
+        summary = (
+            f"{result['request']['base_currency']}/{result['request']['target_currency']} 当前汇率为 "
+            f"{result['realtime'].get('rate')}（{result['realtime'].get('date')}）。"
+            f" 未来{forecast.get('forecast_days')}天预测趋势为 {forecast.get('trend', 'sideways')}，"
+            f" 置信度约 {forecast.get('confidence', 0.0)}。"
+        )
+        return {
+            "ok": True,
+            "user_facing_summary": summary,
+            "structured_payload": result,
+        }
+
+
+# 便于其他模块直接 import 使用的默认实例
+forex_collab_api = ForexAgentCollaborationAPI()
+

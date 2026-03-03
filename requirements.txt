@@ -1,0 +1,39 @@
+# ===== LangGraph 核心框架 =====
+langgraph>=0.2.50
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-openai>=0.2.0
+langchain-google-genai>=2.0.0
+
+# ===== 数据处理 =====
+pandas>=2.1.0
+numpy>=1.26.0
+
+# ===== HTTP 请求 =====
+requests>=2.31.0
+google-genai>=0.7.0
+zai-sdk>=0.0.8
+
+# ===== 数据可视化 =====
+matplotlib>=3.8.0
+seaborn>=0.13.0
+streamlit>=1.39.0
+plotly>=5.24.0
+streamlit-autorefresh>=1.0.1
+
+# ===== 机器学习 (趋势预测) =====
+scikit-learn>=1.4.0
+
+# ===== 统计预测 =====
+statsmodels>=0.14.0
+
+# ===== 环境变量管理 =====
+python-dotenv>=1.0.0
+
+# ===== 类型提示支持 =====
+typing_extensions>=4.8.0
+
+# ===== 跨工程协作接口 =====
+fastapi>=0.115.0
+uvicorn>=0.30.0
+mcp>=1.2.0
