@@ -1,0 +1,88 @@
+# ============================================================
+# 外汇智能体 Docker Compose 编排
+# ============================================================
+#
+# 快速开始：
+#   cp .env.example .env          # 填入 API Key
+#   docker compose build          # 构建镜像
+#   docker compose up -d          # 启动 api + ui
+#   docker compose --profile full up -d   # 启动全部（含 mcp）
+#
+# 常用命令：
+#   docker compose ps             # 查看运行状态
+#   docker compose logs -f api    # 跟踪 API 日志
+#   docker compose down           # 停止并清理
+#
+# 构建后产出的镜像：
+#   forex-agent-api:latest        ← api 服务
+#   forex-agent-ui:latest         ← ui 服务
+#   forex-agent-mcp:latest        ← mcp 服务
+#
+# 单独运行某个镜像（脱离 compose）：
+#   docker run -d --env-file .env -p 8000:8000 forex-agent-api
+#   docker run -d --env-file .env -e COLLAB_API_BASE_URL=http://host.docker.internal:8000 -p 8501:8501 forex-agent-ui
+#
+# ============================================================
+
+services:
+  # ---------- FastAPI 协作服务 ----------
+  api:
+    build:
+      context: .
+      target: api
+    image: forex-agent-api:latest
+    container_name: forex-agent-api
+    ports:
+      - "${API_PORT:-8000}:8000"
+    env_file:
+      - .env
+    environment:
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=3).raise_for_status()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ---------- Streamlit 展示层 ----------
+  ui:
+    build:
+      context: .
+      target: ui
+    image: forex-agent-ui:latest
+    container_name: forex-agent-ui
+    ports:
+      - "${UI_PORT:-8501}:8501"
+    env_file:
+      - .env
+    environment:
+      - COLLAB_API_BASE_URL=http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------- MCP 服务（可选，按需启用） ----------
+  mcp:
+    build:
+      context: .
+      target: mcp
+    image: forex-agent-mcp:latest
+    container_name: forex-agent-mcp
+    ports:
+      - "${MCP_PORT:-8080}:8080"
+    env_file:
+      - .env
+    environment:
+      - COLLAB_API_BASE_URL=http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - full
