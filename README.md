@@ -9,6 +9,14 @@
 - 跨工程智能体协作（REST / MCP）
 
 ---
+## 网页展示
+
+
+
+https://github.com/user-attachments/assets/937eefb7-07c7-462e-807e-395e0ec5efd3
+
+
+---
 
 ## 技术栈
 
@@ -472,12 +480,6 @@ curl -X POST "http://localhost:8000/v1/forex/analyze" \
 
 ---
 
-## 11. 界面展示
-
-![](./doc/web.png)
-
----
-
 ## FAQ. 快速问答（高频）
 
 - **Q: 智能体体现在哪？**
@@ -509,3 +511,4 @@ curl -X POST "http://localhost:8000/v1/forex/analyze" \
 
 - **Q: Vue 前端如何访问？**
   A: 开发模式 `cd frontend && npm run dev` 访问 `http://localhost:5173`；生产模式 `npm run build` 后访问 `http://localhost:8100/ui/`（由 FastAPI 托管静态文件）。
+
