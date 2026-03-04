@@ -1,12 +1,22 @@
 """
 大模型客户端封装
 ================
-统一封装 Gemini 和 ChatGLM，便于在 LangGraph 节点内通过同一接口调用。
+统一封装 Gemini / ChatGLM / DeepSeek / vLLM，便于在 LangGraph 节点内通过同一接口调用。
 内置内存缓存：相同 prompt 不重复调用 API，节省 token 和延迟。
+
+支持的 LLM_PROVIDER：
+  - gemini    : Google Gemini（google-genai SDK）
+  - chatglm   : 智谱 ChatGLM（zai-sdk）
+  - deepseek  : DeepSeek 官方 API（兼容 OpenAI 协议，通过 requests 直连）
+  - vllm      : 本地 vLLM 推理服务（兼容 OpenAI /v1/chat/completions 协议）
 """
 from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from functools import lru_cache
+
+import requests
+
 from src.config import settings
 from src.logging_utils import get_logger
 
@@ -24,8 +34,12 @@ class BaseLLMClient(ABC):
         return _cached_generate(self.__class__.__name__, prompt, system_prompt or "")
 
 
+# ================================================================
+#  Gemini
+# ================================================================
+
 class GeminiClient(BaseLLMClient):
-    """Gemini SDK 封装（默认 gemini-2.0-flash-lite，延迟极低）。"""
+    """Gemini SDK 封装。"""
 
     def _call(self, prompt: str, system_prompt: str | None = None) -> str:
         from google import genai
@@ -39,9 +53,8 @@ class GeminiClient(BaseLLMClient):
         response = client.models.generate_content(
             model=settings.GEMINI_MODEL,
             contents=final_prompt,
-            # config={"max_output_tokens": 512},
         )
-        text = getattr(response, "text", "") or "Gemini 未返回文本结果。"
+        text = getattr(response, "text", "") or ""
         if not text.strip():
             logger.warning("llm_empty_response | provider=gemini | model=%s", settings.GEMINI_MODEL)
             raise ValueError("Gemini 返回空文本。")
@@ -49,8 +62,12 @@ class GeminiClient(BaseLLMClient):
         return text
 
 
+# ================================================================
+#  ChatGLM / ZhipuAI
+# ================================================================
+
 class ChatGLMClient(BaseLLMClient):
-    """ChatGLM (zai-sdk) 封装（默认 glm-4-flash，速度最快）。"""
+    """ChatGLM (zai-sdk) 封装。"""
 
     def _call(self, prompt: str, system_prompt: str | None = None) -> str:
         from zai import ZhipuAiClient
@@ -69,10 +86,8 @@ class ChatGLMClient(BaseLLMClient):
             model=settings.CHATGLM_MODEL,
             messages=messages,
             temperature=0.4,
-            thinking={"type": "disabled"}
-            # max_tokens=512
+            thinking={"type": "disabled"},
         )
-        print(response)
         text = response.choices[0].message.content or ""
         if not text.strip():
             text = response.choices[0].message.reasoning_content or ""
@@ -83,18 +98,139 @@ class ChatGLMClient(BaseLLMClient):
         return text
 
 
-# 全局 LLM 实例（惰性初始化，避免每次 import 就构造）
+# ================================================================
+#  DeepSeek（兼容 OpenAI 协议，通过 requests 直连）
+# ================================================================
+
+class DeepSeekClient(BaseLLMClient):
+    """
+    DeepSeek 官方 API 封装。
+    接口完全兼容 OpenAI /v1/chat/completions，使用 requests 直连，无需额外 SDK。
+
+    配置示例（.env）：
+      LLM_PROVIDER=deepseek
+      DEEPSEEK_API_KEY=sk-xxx
+      DEEPSEEK_MODEL=deepseek-chat
+    """
+
+    def _call(self, prompt: str, system_prompt: str | None = None) -> str:
+        if not settings.DEEPSEEK_API_KEY:
+            return "未配置 DEEPSEEK_API_KEY，返回本地占位报告。"
+
+        logger.info(
+            "llm_request | provider=deepseek | model=%s | base_url=%s | prompt_len=%s",
+            settings.DEEPSEEK_MODEL, settings.DEEPSEEK_BASE_URL, len(prompt),
+        )
+        messages: list[dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        resp = requests.post(
+            f"{settings.DEEPSEEK_BASE_URL.rstrip('/')}/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.DEEPSEEK_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": settings.DEEPSEEK_MODEL,
+                "messages": messages,
+                "temperature": 0.4,
+                "max_tokens": 1024,
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        if not text.strip():
+            logger.warning("llm_empty_response | provider=deepseek | model=%s", settings.DEEPSEEK_MODEL)
+            raise ValueError("DeepSeek 返回空文本。")
+        logger.info("llm_response | provider=deepseek | model=%s | text_len=%s", settings.DEEPSEEK_MODEL, len(text))
+        return text
+
+
+# ================================================================
+#  vLLM 本地推理（兼容 OpenAI /v1/chat/completions 协议）
+# ================================================================
+
+class VLLMClient(BaseLLMClient):
+    """
+    vLLM 本地推理服务封装。
+    vLLM 启动后默认暴露兼容 OpenAI 的 HTTP API，直接用 requests 对接。
+
+    典型 vLLM 启动命令：
+      python -m vllm.entrypoints.openai.api_server \\
+          --model Qwen/Qwen2.5-7B-Instruct \\
+          --port 8000 --api-key EMPTY
+
+    配置示例（.env）：
+      LLM_PROVIDER=vllm
+      VLLM_BASE_URL=http://localhost:8000/v1
+      VLLM_MODEL=Qwen/Qwen2.5-7B-Instruct
+      VLLM_API_KEY=EMPTY
+    """
+
+    def _call(self, prompt: str, system_prompt: str | None = None) -> str:
+        logger.info(
+            "llm_request | provider=vllm | model=%s | base_url=%s | prompt_len=%s",
+            settings.VLLM_MODEL, settings.VLLM_BASE_URL, len(prompt),
+        )
+        messages: list[dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        resp = requests.post(
+            f"{settings.VLLM_BASE_URL.rstrip('/')}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.VLLM_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": settings.VLLM_MODEL,
+                "messages": messages,
+                "temperature": 0.4,
+                "max_tokens": 1024,
+            },
+            timeout=120,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        if not text.strip():
+            logger.warning("llm_empty_response | provider=vllm | model=%s", settings.VLLM_MODEL)
+            raise ValueError("vLLM 返回空文本。")
+        logger.info("llm_response | provider=vllm | model=%s | text_len=%s", settings.VLLM_MODEL, len(text))
+        return text
+
+
+# ================================================================
+#  单例路由
+# ================================================================
+
 _client_instance: BaseLLMClient | None = None
+
+_PROVIDER_MAP: dict[str, type[BaseLLMClient]] = {
+    "gemini": GeminiClient,
+    "chatglm": ChatGLMClient,
+    "deepseek": DeepSeekClient,
+    "vllm": VLLMClient,
+}
 
 
 def get_llm_client() -> BaseLLMClient:
-    """根据配置返回指定的 LLM 客户端（单例）。"""
+    """根据 LLM_PROVIDER 配置返回对应客户端（单例）。"""
     global _client_instance
     if _client_instance is None:
-        if settings.LLM_PROVIDER == "chatglm":
-            _client_instance = ChatGLMClient()
-        else:
-            _client_instance = GeminiClient()
+        cls = _PROVIDER_MAP.get(settings.LLM_PROVIDER)
+        if cls is None:
+            supported = ", ".join(sorted(_PROVIDER_MAP.keys()))
+            raise ValueError(
+                f"未知的 LLM_PROVIDER: '{settings.LLM_PROVIDER}'，支持的值：{supported}"
+            )
+        _client_instance = cls()
+        logger.info("llm_client_init | provider=%s | class=%s", settings.LLM_PROVIDER, cls.__name__)
     return _client_instance
 
 

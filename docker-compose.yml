@@ -5,8 +5,13 @@
 # 快速开始：
 #   cp .env.example .env          # 填入 API Key
 #   docker compose build          # 构建镜像
-#   docker compose up -d          # 启动 api + ui
-#   docker compose --profile full up -d   # 启动全部（含 mcp）
+#   docker compose up -d          # 启动 api + streamlit-ui
+#   docker compose --profile vue up -d    # 额外启动 Vue 前端
+#   docker compose --profile full up -d   # 启动全部（含 MCP）
+#
+# 注意：API 镜像已内置 Vue 前端静态文件，访问 http://localhost:8000/ui/
+# 无需单独启动 vue-ui 容器即可使用 Vue 前端。vue-ui 容器仅用于
+# 独立部署场景（如 CDN / 反向代理分离部署）。
 #
 # 常用命令：
 #   docker compose ps             # 查看运行状态
@@ -14,18 +19,15 @@
 #   docker compose down           # 停止并清理
 #
 # 构建后产出的镜像：
-#   forex-agent-api:latest        ← api 服务
-#   forex-agent-ui:latest         ← ui 服务
-#   forex-agent-mcp:latest        ← mcp 服务
-#
-# 单独运行某个镜像（脱离 compose）：
-#   docker run -d --env-file .env -p 8000:8000 forex-agent-api
-#   docker run -d --env-file .env -e COLLAB_API_BASE_URL=http://host.docker.internal:8000 -p 8501:8501 forex-agent-ui
+#   forex-agent-api:latest        ← API 服务（含 Vue 静态文件）
+#   forex-agent-ui:latest         ← Streamlit UI 服务
+#   forex-agent-vue:latest        ← 独立 Vue 前端（Nginx）
+#   forex-agent-mcp:latest        ← MCP 服务
 #
 # ============================================================
 
 services:
-  # ---------- FastAPI 协作服务 ----------
+  # ---------- FastAPI 协作服务（含 Vue 前端静态文件） ----------
   api:
     build:
       context: .
@@ -50,7 +52,7 @@ services:
       start_period: 10s
 
   # ---------- Streamlit 展示层 ----------
-  ui:
+  streamlit-ui:
     build:
       context: .
       target: ui
@@ -66,6 +68,23 @@ services:
       api:
         condition: service_healthy
     restart: unless-stopped
+
+  # ---------- Vue 前端独立部署（可选，按需启用） ----------
+  vue-ui:
+    build:
+      context: .
+      target: vue-ui
+    image: forex-agent-vue:latest
+    container_name: forex-agent-vue
+    ports:
+      - "${VUE_PORT:-5173}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - vue
+      - full
 
   # ---------- MCP 服务（可选，按需启用） ----------
   mcp:

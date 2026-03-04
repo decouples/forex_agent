@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 import uuid
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from src.api_models import A2AMessageRequest, FullAnalysisRequest, RealtimeRequest, StandardResponse
 from src.collaboration_api import forex_collab_api
 from src.logging_utils import get_logger
@@ -43,6 +45,12 @@ app = FastAPI(
     description="外汇智能体跨工程协作接口（REST + A2A-style message）",
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def _normalize_analysis_data(result: dict) -> dict:
     """标准化分析返回体：data 只保留业务字段，去掉嵌套状态字段。"""
@@ -199,4 +207,16 @@ def a2a_message(req: A2AMessageRequest) -> StandardResponse:
     except Exception as exc:
         logger.exception("a2a_error | action=%s", req.action)
         return StandardResponse(ok=False, trace_id=req.trace_id, error=str(exc))
+
+
+# ---------- Vue 前端静态文件（必须在所有路由之后） ----------
+_VUE_DIST = Path(__file__).parent.parent / "frontend" / "dist"
+if _VUE_DIST.is_dir():
+    from fastapi.responses import RedirectResponse
+
+    @app.get("/ui")
+    def _ui_redirect():
+        return RedirectResponse(url="/ui/")
+
+    app.mount("/ui", StaticFiles(directory=str(_VUE_DIST), html=True), name="vue-ui")
 

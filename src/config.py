@@ -22,11 +22,26 @@ class Settings:
     """项目全局配置类"""
 
     # ---------- LLM 配置 ----------
+    # 可选值：gemini / chatglm / deepseek / vllm
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "gemini").lower()
+
+    # Gemini
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-lite")
+
+    # ChatGLM / ZhipuAI
     CHATGLM_API_KEY: str = os.getenv("CHATGLM_API_KEY", "")
     CHATGLM_MODEL: str = os.getenv("CHATGLM_MODEL", "glm-4-flash")
+
+    # DeepSeek（官方 API，兼容 OpenAI 协议）
+    DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
+    DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+
+    # vLLM 本地推理服务（兼容 OpenAI /v1/chat/completions 协议）
+    VLLM_BASE_URL: str = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
+    VLLM_MODEL: str = os.getenv("VLLM_MODEL", "default")
+    VLLM_API_KEY: str = os.getenv("VLLM_API_KEY", "EMPTY")
 
     # ---------- 外汇 API 配置 ----------
     # 实时查询数据源优先级（从左到右依次降级）
