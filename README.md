@@ -9,6 +9,11 @@
 - 跨工程智能体协作（REST / MCP）
 
 ---
+## 网页展示
+
+https://github.com/user-attachments/assets/49437db9-1245-4476-8372-951edc3968c2
+
+---
 
 ## 技术栈
 
@@ -386,12 +391,6 @@ curl -X POST "http://localhost:8000/v1/forex/analyze" \
 
 ---
 
-## 11. 界面展示
-
-![](./doc/web.png)
-
----
-
 ## FAQ. 快速问答（高频）
 
 - **Q: 智能体体现在哪？**
@@ -414,3 +413,4 @@ curl -X POST "http://localhost:8000/v1/forex/analyze" \
 
 - **Q: Docker 部署后如何查看日志？**
   A: `docker compose logs -f api` 查看 API 日志，或查看挂载的 `./logs/forex_agent.log`。
+
