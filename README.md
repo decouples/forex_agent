@@ -13,7 +13,8 @@
 
 
 
-https://github.com/user-attachments/assets/937eefb7-07c7-462e-807e-395e0ec5efd3
+https://github.com/user-attachments/assets/0f1c25af-97a7-4a5b-806e-7261cd1be90a
+
 
 
 ---
@@ -511,4 +512,5 @@ curl -X POST "http://localhost:8000/v1/forex/analyze" \
 
 - **Q: Vue 前端如何访问？**
   A: 开发模式 `cd frontend && npm run dev` 访问 `http://localhost:5173`；生产模式 `npm run build` 后访问 `http://localhost:8100/ui/`（由 FastAPI 托管静态文件）。
+
 
