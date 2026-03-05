@@ -39,6 +39,7 @@ class ForexAgentState(TypedDict, total=False):
 
     # ---- 节点 report 写入 ----
     report: str
+    report_en: str
 
     # ---- 多智能体通信消息 ----
     agent_messages: list[dict[str, Any]]

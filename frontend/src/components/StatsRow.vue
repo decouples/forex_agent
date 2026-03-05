@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { AnalysisResult } from '../types'
-import { CURRENCY_NAME_MAP } from '../constants'
+import type { Locale } from '../i18n'
+import { useLocale } from '../composables/useLocale'
 
-const props = defineProps<{ data: AnalysisResult }>()
+const props = defineProps<{ data: AnalysisResult; locale: Locale }>()
+
+const { t, currencyName } = useLocale()
 
 const stats = computed(() => {
   const r = props.data
@@ -18,33 +21,33 @@ const stats = computed(() => {
 
   return [
     {
-      label: `${CURRENCY_NAME_MAP[base] ?? base} → ${CURRENCY_NAME_MAP[target] ?? target}`,
+      label: `${currencyName(base)} → ${currencyName(target)}`,
       value: current.toFixed(6),
-      sub: '当前汇率',
+      sub: t('currentRate'),
       color: 'var(--accent-cyan)',
     },
     {
-      label: '历史最高',
+      label: t('histHigh'),
       value: high.toFixed(6),
-      sub: `近 ${hist.length} 天`,
+      sub: `${t('recent')} ${hist.length} ${t('days')}`,
       color: 'var(--accent-green)',
     },
     {
-      label: '历史最低',
+      label: t('histLow'),
       value: low.toFixed(6),
-      sub: `近 ${hist.length} 天`,
+      sub: `${t('recent')} ${hist.length} ${t('days')}`,
       color: 'var(--accent-red)',
     },
     {
-      label: '历史均值',
+      label: t('histAvg'),
       value: avg.toFixed(6),
-      sub: `近 ${hist.length} 天`,
+      sub: `${t('recent')} ${hist.length} ${t('days')}`,
       color: 'var(--accent-amber)',
     },
     {
-      label: '预测模型',
+      label: t('predModel'),
       value: r.forecast?.model_used ?? '-',
-      sub: `趋势: ${r.forecast?.trend ?? '-'}`,
+      sub: `${t('trend')}: ${r.forecast?.trend ?? '-'}`,
       color: 'var(--accent-purple)',
     },
   ]

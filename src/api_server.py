@@ -61,6 +61,7 @@ def _normalize_analysis_data(result: dict) -> dict:
         "analysis": result.get("analysis", {}),
         "forecast": result.get("forecast", {}),
         "report": result.get("report", ""),
+        "report_en": result.get("report_en", ""),
         "node_timings": result.get("node_timings", {}),
     }
 

@@ -9,6 +9,8 @@ import {
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { AnalysisResult } from '../types'
+import type { Locale } from '../i18n'
+import { useLocale } from '../composables/useLocale'
 
 use([
   LineChart, TitleComponent, TooltipComponent, LegendComponent,
@@ -18,7 +20,10 @@ use([
 const props = defineProps<{
   data: AnalysisResult
   loading: boolean
+  locale: Locale
 }>()
+
+const { t, formatDate } = useLocale()
 
 const chartRef = ref()
 
@@ -32,7 +37,6 @@ const option = computed(() => {
   const histDates = hist.map(h => h.date)
   const histRates = hist.map(h => h.rate)
 
-  // MA 计算
   const ma7 = histRates.map((_, i) => {
     if (i < 6) return null
     const slice = histRates.slice(i - 6, i + 1)
@@ -44,7 +48,6 @@ const option = computed(() => {
     return slice.reduce((a, b) => a + b, 0) / slice.length
   })
 
-  // 预测日期
   const lastDate = hist.length ? new Date(hist[hist.length - 1].date) : new Date()
   const forecastDates: string[] = []
   for (let i = 1; i <= forecast.length; i++) {
@@ -55,7 +58,6 @@ const option = computed(() => {
 
   const allDates = [...histDates, ...forecastDates]
 
-  // 预测线：从最后一个真实点接出
   const predLine: (number | null)[] = new Array(histRates.length).fill(null)
   if (histRates.length > 0) {
     predLine[predLine.length - 1] = histRates[histRates.length - 1]
@@ -65,7 +67,7 @@ const option = computed(() => {
   return {
     backgroundColor: 'transparent',
     title: {
-      text: `${base}/${target} 汇率走势与预测`,
+      text: `${base}/${target} ${t('chartTitle')}`,
       left: 'center',
       top: 8,
       textStyle: { color: '#e8ecf4', fontSize: 16, fontWeight: 600 },
@@ -97,10 +99,7 @@ const option = computed(() => {
       data: allDates,
       axisLabel: {
         color: '#8b95a8', fontSize: 11, rotate: 30,
-        formatter: (v: string) => {
-          const d = new Date(v)
-          return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`
-        },
+        formatter: (v: string) => formatDate(v),
       },
       axisLine: { lineStyle: { color: '#2a3550' } },
       splitLine: { show: false },
@@ -114,7 +113,7 @@ const option = computed(() => {
     },
     series: [
       {
-        name: '历史汇率',
+        name: t('histRate'),
         type: 'line',
         data: [...histRates, ...new Array(forecastDates.length).fill(null)],
         smooth: true,
@@ -147,7 +146,7 @@ const option = computed(() => {
         lineStyle: { color: '#10b981', width: 1, type: 'dotted' },
       },
       {
-        name: '预测汇率',
+        name: t('predRate'),
         type: 'line',
         data: predLine,
         smooth: true,
@@ -180,7 +179,7 @@ watch(() => props.data, () => {
     <Transition name="fade">
       <div v-if="loading" class="loading-overlay">
         <div class="spinner" />
-        <div class="loading-text">正在获取数据并分析...</div>
+        <div class="loading-text">{{ t('loadingData') }}</div>
       </div>
     </Transition>
   </div>

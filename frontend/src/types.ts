@@ -28,6 +28,7 @@ export interface AnalysisResult {
   analysis: Record<string, unknown>
   forecast: ForecastResult
   report: string
+  report_en: string
   node_timings: Record<string, number>
 }
 

@@ -205,6 +205,22 @@ def forecast_node(state: ForexAgentState) -> dict:
     return {"forecast": result, "node_timings": timings}
 
 
+def _build_data_block(state: ForexAgentState) -> str:
+    a = state["analysis"]
+    f = state["forecast"]
+    return (
+        f"- Pair: {state['base_currency']}/{state['target_currency']}\n"
+        f"- Live rate: {state['realtime_rate']} (date: {state['realtime_date']})\n"
+        f"- Historical mean: {a['mean_rate']:.6f}, volatility: {a['std_rate']:.6f}\n"
+        f"- Period return: {a['return_pct']:+.2f}%, trend: {a['trend_label']}\n"
+        f"- Forecast method: {f.get('method', 'unknown')}\n"
+        f"- Forecast trend: {f.get('trend', 'sideways')}\n"
+        f"- Confidence: {f.get('confidence', 0.0)}\n"
+        f"- Reason: {f.get('reason', '-')}\n"
+        f"- {f['forecast_days']}-day forecast final rate: {f['predicted_rates'][-1]:.6f}"
+    )
+
+
 def report_node(state: ForexAgentState) -> dict:
     logger.info(
         "node_start | node=report | input={method:%s,trend:%s,last:%.6f}",
@@ -215,30 +231,33 @@ def report_node(state: ForexAgentState) -> dict:
     t0 = time.perf_counter()
     a = state["analysis"]
     f = state["forecast"]
-    prompt = (
+    data_block = _build_data_block(state)
+
+    prompt_zh = (
         f"请根据以下外汇数据生成一份简洁专业的分析报告（中文，300字以内）：\n"
-        f"- 货币对：{state['base_currency']}/{state['target_currency']}\n"
-        f"- 实时汇率：{state['realtime_rate']}（日期：{state['realtime_date']}）\n"
-        f"- 历史均值：{a['mean_rate']:.6f}，波动率：{a['std_rate']:.6f}\n"
-        f"- 区间涨跌幅：{a['return_pct']:+.2f}%，趋势：{a['trend_label']}\n"
-        f"- 预测方法：{f.get('method', 'unknown')}\n"
-        f"- 预测趋势：{f.get('trend', 'sideways')}\n"
-        f"- 预测置信度：{f.get('confidence', 0.0)}\n"
-        f"- 预测说明：{f.get('reason', '-')}\n"
-        f"- 预测{f['forecast_days']}天后汇率：{f['predicted_rates'][-1]:.6f}\n\n"
+        f"{data_block}\n\n"
         f"报告须包含：1) 当前走势解读 2) 未来趋势判断 3) 风险提示（非投资建议）"
     )
+    prompt_en = (
+        f"Generate a concise professional forex analysis report (English, within 200 words) "
+        f"based on the following data:\n"
+        f"{data_block}\n\n"
+        f"Include: 1) Current trend interpretation 2) Future trend forecast 3) Risk disclaimer (not investment advice)"
+    )
+
+    report_zh = ""
+    report_en = ""
+
     try:
-        report = llm_client.generate(
-            prompt=prompt,
+        report_zh = llm_client.generate(
+            prompt=prompt_zh,
             system_prompt="你是谨慎、专业的外汇分析助手。",
         )
-        if not report or not report.strip():
-            raise ValueError("LLM 报告为空。")
+        if not report_zh or not report_zh.strip():
+            raise ValueError("LLM 中文报告为空。")
     except Exception as exc:
-        # 兜底：即使 LLM 调用失败，也返回可展示文本，避免前端只显示标题。
-        logger.warning("report_llm_failed | reason=%s", exc)
-        report = (
+        logger.warning("report_llm_zh_failed | reason=%s", exc)
+        report_zh = (
             "大模型调用失败，已返回规则化摘要：\n\n"
             f"- 当前汇率：{state['realtime_rate']:.6f}（{state['realtime_date']}）\n"
             f"- 区间涨跌幅：{a['return_pct']:+.2f}%\n"
@@ -246,15 +265,33 @@ def report_node(state: ForexAgentState) -> dict:
             f"- 预测终值：{f['predicted_rates'][-1]:.6f}\n"
             f"- 错误信息：{exc}"
         )
+
+    try:
+        report_en = llm_client.generate(
+            prompt=prompt_en,
+            system_prompt="You are a cautious, professional forex analysis assistant.",
+        )
+        if not report_en or not report_en.strip():
+            raise ValueError("LLM English report is empty.")
+    except Exception as exc:
+        logger.warning("report_llm_en_failed | reason=%s", exc)
+        report_en = (
+            "LLM call failed. Rule-based summary:\n\n"
+            f"- Current rate: {state['realtime_rate']:.6f} ({state['realtime_date']})\n"
+            f"- Period return: {a['return_pct']:+.2f}%\n"
+            f"- Trend: {a['trend_label']}\n"
+            f"- Forecast final: {f['predicted_rates'][-1]:.6f}\n"
+            f"- Error: {exc}"
+        )
+
     elapsed = time.perf_counter() - t0
     timings = dict(state.get("node_timings") or {})
     timings["report"] = round(elapsed, 3)
     logger.info(
-        "node_end | node=report | output={report_len:%s} | elapsed=%.3fs",
-        len(report),
-        elapsed,
+        "node_end | node=report | output={zh_len:%s,en_len:%s} | elapsed=%.3fs",
+        len(report_zh), len(report_en), elapsed,
     )
-    return {"report": report, "node_timings": timings}
+    return {"report": report_zh, "report_en": report_en, "node_timings": timings}
 
 
 # ---------- 构建图 ----------

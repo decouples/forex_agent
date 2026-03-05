@@ -39,6 +39,7 @@ class ForexRunResponse(TypedDict):
     analysis: dict[str, Any]
     forecast: dict[str, Any]
     report: str
+    report_en: str
     node_timings: dict[str, float]
     error: str
 
@@ -133,6 +134,15 @@ class ForexAgentCollaborationAPI:
                 f"- 预测结果：未来 {forecast_days} 天汇率保持 1.0\n\n"
                 f"> 提示：如需分析实际汇率走势，请选择两种不同的货币。"
             ),
+            "report_en": (
+                f"## {base}/{target} Analysis Report\n\n"
+                f"Base and target currencies are identical ({base}). "
+                f"The exchange rate is constant at **1.0** with zero volatility.\n\n"
+                f"- Current rate: 1.000000\n"
+                f"- Historical volatility: 0.000000\n"
+                f"- Forecast: rate remains 1.0 for the next {forecast_days} days\n\n"
+                f"> Note: Select two different currencies for actual trend analysis."
+            ),
             "node_timings": {},
             "error": "",
         }
@@ -186,6 +196,7 @@ class ForexAgentCollaborationAPI:
                 "analysis": result.get("analysis", {}),
                 "forecast": result.get("forecast", {}),
                 "report": result.get("report", ""),
+                "report_en": result.get("report_en", ""),
                 "node_timings": result.get("node_timings", {}),
                 "error": "",
             }
@@ -204,6 +215,7 @@ class ForexAgentCollaborationAPI:
                 "analysis": {},
                 "forecast": {},
                 "report": "",
+                "report_en": "",
                 "node_timings": {},
                 "error": str(exc),
             }
