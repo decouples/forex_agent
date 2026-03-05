@@ -7,6 +7,11 @@
 - 历史数据处理分析
 - 未来趋势预测
 - 跨工程智能体协作（REST / MCP）
+---
+
+## 网页展示
+
+https://github.com/user-attachments/assets/8fd8e032-2719-440f-903c-4e9888315a30
 
 ---
 
@@ -509,3 +514,4 @@ curl -X POST "http://localhost:8000/v1/forex/analyze" \
 
 - **Q: Vue 前端如何访问？**
   A: 开发模式 `cd frontend && npm run dev` 访问 `http://localhost:5173`；生产模式 `npm run build` 后访问 `http://localhost:8100/ui/`（由 FastAPI 托管静态文件）。
+
