@@ -1,7 +1,8 @@
 """
-跨工程协作服务（FastAPI）
-=========================
+跨工程协作服务（FastAPI 异步版）
+================================
 将本外汇智能体暴露为 HTTP 服务，便于其他项目中的智能体进行远程调用。
+所有端点均为 async def，不会阻塞 uvicorn 事件循环。
 """
 
 from __future__ import annotations
@@ -67,12 +68,12 @@ def _normalize_analysis_data(result: dict) -> dict:
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
+async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @app.post("/v1/forex/realtime", response_model=StandardResponse)
-def realtime_quote(req: RealtimeRequest) -> StandardResponse:
+async def realtime_quote(req: RealtimeRequest) -> StandardResponse:
     trace_id = req.caller_task_id
     logger.info(
         "api_call | endpoint=/v1/forex/realtime | caller=%s | task_id=%s",
@@ -80,18 +81,16 @@ def realtime_quote(req: RealtimeRequest) -> StandardResponse:
         trace_id,
     )
     try:
-        data = forex_collab_api.get_realtime_quote(
+        data = await forex_collab_api.get_realtime_quote(
             base_currency=req.base_currency.upper(),
             target_currency=req.target_currency.upper(),
         )
-        # #region agent log
         _debug_log(
             hypothesis_id="H1",
-            location="src/api_server.py:67",
+            location="src/api_server.py:realtime_quote",
             message="realtime_response_shape",
             data={"keys": sorted(list(data.keys())), "rate_type": type(data.get("rate")).__name__},
         )
-        # #endregion
         return StandardResponse(ok=True, trace_id=trace_id, data=data)
     except Exception as exc:
         logger.exception("api_error | endpoint=/v1/forex/realtime")
@@ -99,14 +98,14 @@ def realtime_quote(req: RealtimeRequest) -> StandardResponse:
 
 
 @app.post("/v1/forex/analyze", response_model=StandardResponse)
-def full_analysis(req: FullAnalysisRequest) -> StandardResponse:
+async def full_analysis(req: FullAnalysisRequest) -> StandardResponse:
     trace_id = req.caller_task_id
     logger.info(
         "api_call | endpoint=/v1/forex/analyze | caller=%s | task_id=%s",
         req.caller_agent,
         trace_id,
     )
-    result = forex_collab_api.run_full_analysis(
+    result = await forex_collab_api.run_full_analysis(
         {
             "base_currency": req.base_currency,
             "target_currency": req.target_currency,
@@ -116,10 +115,9 @@ def full_analysis(req: FullAnalysisRequest) -> StandardResponse:
             "caller_task_id": req.caller_task_id,
         }
     )
-    # #region agent log
     _debug_log(
         hypothesis_id="H2",
-        location="src/api_server.py:95",
+        location="src/api_server.py:full_analysis",
         message="analyze_result_shape",
         data={
             "result_keys": sorted(list(result.keys())),
@@ -128,17 +126,14 @@ def full_analysis(req: FullAnalysisRequest) -> StandardResponse:
             "history_records_len": len(result.get("history_records", [])) if isinstance(result.get("history_records", []), list) else -1,
         },
     )
-    # #endregion
     ok = bool(result.get("ok", False))
     normalized = _normalize_analysis_data(result) if ok else {}
-    # #region agent log
     _debug_log(
         hypothesis_id="H3",
-        location="src/api_server.py:128",
+        location="src/api_server.py:full_analysis:normalized",
         message="analyze_normalized_response_shape",
         data={"ok": ok, "data_keys": sorted(list(normalized.keys())) if isinstance(normalized, dict) else []},
     )
-    # #endregion
     return StandardResponse(
         ok=ok,
         trace_id=trace_id,
@@ -148,7 +143,7 @@ def full_analysis(req: FullAnalysisRequest) -> StandardResponse:
 
 
 @app.post("/v1/a2a/message", response_model=StandardResponse)
-def a2a_message(req: A2AMessageRequest) -> StandardResponse:
+async def a2a_message(req: A2AMessageRequest) -> StandardResponse:
     """
     A2A 风格通用入口：
     - action=get_realtime_quote
@@ -164,14 +159,14 @@ def a2a_message(req: A2AMessageRequest) -> StandardResponse:
     )
     try:
         if req.action == "get_realtime_quote":
-            data = forex_collab_api.get_realtime_quote(
+            data = await forex_collab_api.get_realtime_quote(
                 base_currency=str(req.payload.get("base_currency", "USD")).upper(),
                 target_currency=str(req.payload.get("target_currency", "CNY")).upper(),
             )
             return StandardResponse(ok=True, trace_id=req.trace_id, data=data)
 
         if req.action == "run_full_analysis":
-            result = forex_collab_api.run_full_analysis(
+            result = await forex_collab_api.run_full_analysis(
                 {
                     "base_currency": req.payload.get("base_currency", "USD"),
                     "target_currency": req.payload.get("target_currency", "CNY"),
@@ -189,7 +184,7 @@ def a2a_message(req: A2AMessageRequest) -> StandardResponse:
                 error=result.get("error", "") if not ok else "",
             )
 
-        result = forex_collab_api.build_customer_agent_context(
+        result = await forex_collab_api.build_customer_agent_context(
             {
                 "base_currency": req.payload.get("base_currency", "USD"),
                 "target_currency": req.payload.get("target_currency", "CNY"),
@@ -216,8 +211,7 @@ if _VUE_DIST.is_dir():
     from fastapi.responses import RedirectResponse
 
     @app.get("/ui")
-    def _ui_redirect():
+    async def _ui_redirect():
         return RedirectResponse(url="/ui/")
 
     app.mount("/ui", StaticFiles(directory=str(_VUE_DIST), html=True), name="vue-ui")
-

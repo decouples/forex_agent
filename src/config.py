@@ -47,7 +47,7 @@ class Settings:
     # 实时查询数据源优先级（从左到右依次降级）
     FOREX_PROVIDER_PRIORITY: str = os.getenv(
         "FOREX_PROVIDER_PRIORITY",
-        "fawazahmed,exchangerate_api,floatrates,frankfurter",
+        "exchangerate_api,floatrates,fawazahmed,frankfurter",
     )
     # 历史查询数据源优先级（从左到右依次降级）
     FOREX_HISTORY_PROVIDER_PRIORITY: str = os.getenv(

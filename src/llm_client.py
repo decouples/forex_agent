@@ -1,37 +1,39 @@
 """
-大模型客户端封装
-================
+大模型客户端封装（异步版）
+========================
 统一封装 Gemini / ChatGLM / DeepSeek / vLLM，便于在 LangGraph 节点内通过同一接口调用。
 内置内存缓存：相同 prompt 不重复调用 API，节省 token 和延迟。
 
 支持的 LLM_PROVIDER：
   - gemini    : Google Gemini（google-genai SDK）
   - chatglm   : 智谱 ChatGLM（zai-sdk）
-  - deepseek  : DeepSeek 官方 API（兼容 OpenAI 协议，通过 requests 直连）
+  - deepseek  : DeepSeek 官方 API（兼容 OpenAI 协议，通过 httpx 异步直连）
   - vllm      : 本地 vLLM 推理服务（兼容 OpenAI /v1/chat/completions 协议）
 """
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
-from functools import lru_cache
 
-import requests
+import httpx
 
 from src.config import settings
 from src.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
+_llm_cache: dict[tuple[str, str, str], str] = {}
+
 
 class BaseLLMClient(ABC):
     """LLM 客户端抽象基类。"""
 
     @abstractmethod
-    def _call(self, prompt: str, system_prompt: str | None = None) -> str:
+    async def _acall(self, prompt: str, system_prompt: str | None = None) -> str:
         raise NotImplementedError
 
-    def generate(self, prompt: str, system_prompt: str | None = None) -> str:
-        return _cached_generate(self.__class__.__name__, prompt, system_prompt or "")
+    async def agenerate(self, prompt: str, system_prompt: str | None = None) -> str:
+        return await _cached_agenerate(self.__class__.__name__, prompt, system_prompt or "", self)
 
 
 # ================================================================
@@ -39,9 +41,9 @@ class BaseLLMClient(ABC):
 # ================================================================
 
 class GeminiClient(BaseLLMClient):
-    """Gemini SDK 封装。"""
+    """Gemini SDK 封装（SDK 本身是同步的，放在线程池中执行避免阻塞事件循环）。"""
 
-    def _call(self, prompt: str, system_prompt: str | None = None) -> str:
+    async def _acall(self, prompt: str, system_prompt: str | None = None) -> str:
         from google import genai
 
         if not settings.GEMINI_API_KEY:
@@ -50,7 +52,9 @@ class GeminiClient(BaseLLMClient):
         logger.info("llm_request | provider=gemini | model=%s | prompt_len=%s", settings.GEMINI_MODEL, len(prompt))
         client = genai.Client(api_key=settings.GEMINI_API_KEY)
         final_prompt = prompt if not system_prompt else f"{system_prompt}\n\n{prompt}"
-        response = client.models.generate_content(
+
+        response = await asyncio.to_thread(
+            client.models.generate_content,
             model=settings.GEMINI_MODEL,
             contents=final_prompt,
         )
@@ -67,9 +71,9 @@ class GeminiClient(BaseLLMClient):
 # ================================================================
 
 class ChatGLMClient(BaseLLMClient):
-    """ChatGLM (zai-sdk) 封装。"""
+    """ChatGLM (zai-sdk) 封装（SDK 同步，放入线程池）。"""
 
-    def _call(self, prompt: str, system_prompt: str | None = None) -> str:
+    async def _acall(self, prompt: str, system_prompt: str | None = None) -> str:
         from zai import ZhipuAiClient
 
         if not settings.CHATGLM_API_KEY:
@@ -82,7 +86,8 @@ class ChatGLMClient(BaseLLMClient):
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        response = client.chat.completions.create(
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
             model=settings.CHATGLM_MODEL,
             messages=messages,
             temperature=0.4,
@@ -99,21 +104,13 @@ class ChatGLMClient(BaseLLMClient):
 
 
 # ================================================================
-#  DeepSeek（兼容 OpenAI 协议，通过 requests 直连）
+#  DeepSeek（兼容 OpenAI 协议，httpx 异步直连）
 # ================================================================
 
 class DeepSeekClient(BaseLLMClient):
-    """
-    DeepSeek 官方 API 封装。
-    接口完全兼容 OpenAI /v1/chat/completions，使用 requests 直连，无需额外 SDK。
+    """DeepSeek 官方 API 封装（httpx 异步）。"""
 
-    配置示例（.env）：
-      LLM_PROVIDER=deepseek
-      DEEPSEEK_API_KEY=sk-xxx
-      DEEPSEEK_MODEL=deepseek-chat
-    """
-
-    def _call(self, prompt: str, system_prompt: str | None = None) -> str:
+    async def _acall(self, prompt: str, system_prompt: str | None = None) -> str:
         if not settings.DEEPSEEK_API_KEY:
             return "未配置 DEEPSEEK_API_KEY，返回本地占位报告。"
 
@@ -126,20 +123,20 @@ class DeepSeekClient(BaseLLMClient):
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        resp = requests.post(
-            f"{settings.DEEPSEEK_BASE_URL.rstrip('/')}/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": settings.DEEPSEEK_MODEL,
-                "messages": messages,
-                "temperature": 0.4,
-                "max_tokens": 1024,
-            },
-            timeout=60,
-        )
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{settings.DEEPSEEK_BASE_URL.rstrip('/')}/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.DEEPSEEK_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": settings.DEEPSEEK_MODEL,
+                    "messages": messages,
+                    "temperature": 0.4,
+                    "max_tokens": 1024,
+                },
+            )
         resp.raise_for_status()
         data = resp.json()
         text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
@@ -155,23 +152,9 @@ class DeepSeekClient(BaseLLMClient):
 # ================================================================
 
 class VLLMClient(BaseLLMClient):
-    """
-    vLLM 本地推理服务封装。
-    vLLM 启动后默认暴露兼容 OpenAI 的 HTTP API，直接用 requests 对接。
+    """vLLM 本地推理服务封装（httpx 异步）。"""
 
-    典型 vLLM 启动命令：
-      python -m vllm.entrypoints.openai.api_server \\
-          --model Qwen/Qwen2.5-7B-Instruct \\
-          --port 8000 --api-key EMPTY
-
-    配置示例（.env）：
-      LLM_PROVIDER=vllm
-      VLLM_BASE_URL=http://localhost:8000/v1
-      VLLM_MODEL=Qwen/Qwen2.5-7B-Instruct
-      VLLM_API_KEY=EMPTY
-    """
-
-    def _call(self, prompt: str, system_prompt: str | None = None) -> str:
+    async def _acall(self, prompt: str, system_prompt: str | None = None) -> str:
         logger.info(
             "llm_request | provider=vllm | model=%s | base_url=%s | prompt_len=%s",
             settings.VLLM_MODEL, settings.VLLM_BASE_URL, len(prompt),
@@ -181,20 +164,20 @@ class VLLMClient(BaseLLMClient):
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        resp = requests.post(
-            f"{settings.VLLM_BASE_URL.rstrip('/')}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.VLLM_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": settings.VLLM_MODEL,
-                "messages": messages,
-                "temperature": 0.4,
-                "max_tokens": 1024,
-            },
-            timeout=120,
-        )
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                f"{settings.VLLM_BASE_URL.rstrip('/')}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.VLLM_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": settings.VLLM_MODEL,
+                    "messages": messages,
+                    "temperature": 0.4,
+                    "max_tokens": 1024,
+                },
+            )
         resp.raise_for_status()
         data = resp.json()
         text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
@@ -234,9 +217,13 @@ def get_llm_client() -> BaseLLMClient:
     return _client_instance
 
 
-@lru_cache(maxsize=64)
-def _cached_generate(client_class: str, prompt: str, system_prompt: str) -> str:
-    """缓存 LLM 调用结果：相同 prompt 直接返回，不重复请求 API。"""
+async def _cached_agenerate(client_class: str, prompt: str, system_prompt: str, client: BaseLLMClient) -> str:
+    """异步安全的内存缓存：相同 prompt 直接返回，不重复请求 API。"""
+    key = (client_class, prompt, system_prompt)
+    if key in _llm_cache:
+        logger.info("llm_cache_hit | client=%s | prompt_len=%s", client_class, len(prompt))
+        return _llm_cache[key]
     logger.info("llm_cache_miss | client=%s | prompt_len=%s", client_class, len(prompt))
-    client = get_llm_client()
-    return client._call(prompt, system_prompt or None)
+    result = await client._acall(prompt, system_prompt or None)
+    _llm_cache[key] = result
+    return result

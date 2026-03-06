@@ -1,7 +1,8 @@
 """
-MCP 服务端（跨工程智能体协作）
-==============================
+MCP 服务端（异步版，跨工程智能体协作）
+=====================================
 将外汇智能体能力以 MCP Tools 形式暴露，便于其他智能体通过 MCP 协议调用。
+所有 tool 函数均为 async def。
 """
 
 from __future__ import annotations
@@ -12,7 +13,6 @@ from src.logging_utils import get_logger
 logger = get_logger(__name__)
 
 try:
-    # 主流 Python MCP SDK（fastmcp 风格）
     from mcp.server.fastmcp import FastMCP
 except Exception as exc:  # pragma: no cover
     FastMCP = None  # type: ignore[assignment]
@@ -30,13 +30,13 @@ def create_mcp_server():
     mcp = FastMCP("forex-agent-mcp")
 
     @mcp.tool()
-    def get_realtime_quote(base_currency: str = "USD", target_currency: str = "CNY") -> dict:
+    async def get_realtime_quote(base_currency: str = "USD", target_currency: str = "CNY") -> dict:
         """获取实时汇率。"""
         logger.info("mcp_call | tool=get_realtime_quote | pair=%s/%s", base_currency, target_currency)
-        return forex_collab_api.get_realtime_quote(base_currency=base_currency, target_currency=target_currency)
+        return await forex_collab_api.get_realtime_quote(base_currency=base_currency, target_currency=target_currency)
 
     @mcp.tool()
-    def run_full_analysis(
+    async def run_full_analysis(
         base_currency: str = "USD",
         target_currency: str = "CNY",
         history_days: int = 90,
@@ -52,7 +52,7 @@ def create_mcp_server():
             base_currency,
             target_currency,
         )
-        return forex_collab_api.run_full_analysis(
+        return await forex_collab_api.run_full_analysis(
             {
                 "base_currency": base_currency,
                 "target_currency": target_currency,
@@ -64,7 +64,7 @@ def create_mcp_server():
         )
 
     @mcp.tool()
-    def build_customer_context(
+    async def build_customer_context(
         base_currency: str = "USD",
         target_currency: str = "CNY",
         history_days: int = 90,
@@ -78,7 +78,7 @@ def create_mcp_server():
             caller_agent,
             caller_task_id,
         )
-        return forex_collab_api.build_customer_agent_context(
+        return await forex_collab_api.build_customer_agent_context(
             {
                 "base_currency": base_currency,
                 "target_currency": target_currency,
@@ -96,4 +96,3 @@ def run_mcp() -> None:
     mcp = create_mcp_server()
     logger.info("mcp_server_start | name=forex-agent-mcp")
     mcp.run()
-

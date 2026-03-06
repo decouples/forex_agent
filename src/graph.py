@@ -1,7 +1,7 @@
 """
-LangGraph 工作流定义
-===================
-所有业务逻辑集中在本模块的节点函数中，展示层（streamlit）只消费 graph.stream() 输出。
+LangGraph 工作流定义（异步版）
+============================
+所有业务逻辑集中在本模块的节点函数中，展示层只消费 graph.astream() 输出。
 
 节点流转（5 步，纯数据管道）：
   START → fetch_realtime → fetch_history → analyze → forecast → report → END
@@ -11,6 +11,7 @@ LangGraph 工作流定义
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from dataclasses import asdict
@@ -35,16 +36,16 @@ NODE_LABELS: dict[str, str] = {
 }
 
 
-# ---------- 节点函数（每个都带计时）----------
+# ---------- 节点函数（异步，每个都带计时）----------
 
-def fetch_realtime_node(state: ForexAgentState) -> dict:
+async def fetch_realtime_node(state: ForexAgentState) -> dict:
     logger.info(
         "node_start | node=fetch_realtime | input={base:%s,target:%s}",
         state["base_currency"],
         state["target_currency"],
     )
     t0 = time.perf_counter()
-    quote = forex_service.get_realtime_quote(
+    quote = await forex_service.get_realtime_quote(
         state["base_currency"], state["target_currency"],
     )
     elapsed = time.perf_counter() - t0
@@ -63,7 +64,7 @@ def fetch_realtime_node(state: ForexAgentState) -> dict:
     }
 
 
-def fetch_history_node(state: ForexAgentState) -> dict:
+async def fetch_history_node(state: ForexAgentState) -> dict:
     logger.info(
         "node_start | node=fetch_history | input={base:%s,target:%s,days:%s}",
         state["base_currency"],
@@ -71,7 +72,7 @@ def fetch_history_node(state: ForexAgentState) -> dict:
         state["history_days"],
     )
     t0 = time.perf_counter()
-    records = forex_service.get_history_rates(
+    records = await forex_service.get_history_rates(
         state["base_currency"], state["target_currency"],
         state["history_days"],
     )
@@ -88,13 +89,14 @@ def fetch_history_node(state: ForexAgentState) -> dict:
     return {"history_records": records, "node_timings": timings}
 
 
-def analyze_node(state: ForexAgentState) -> dict:
+async def analyze_node(state: ForexAgentState) -> dict:
+    """统计分析（CPU 密集，放入线程池避免阻塞事件循环）。"""
     logger.info(
         "node_start | node=analyze | input={points:%s}",
         len(state["history_records"]),
     )
     t0 = time.perf_counter()
-    result = analysis_service.analyze(state["history_records"])
+    result = await asyncio.to_thread(analysis_service.analyze, state["history_records"])
     elapsed = time.perf_counter() - t0
     timings = dict(state.get("node_timings") or {})
     timings["analyze"] = round(elapsed, 3)
@@ -108,7 +110,7 @@ def analyze_node(state: ForexAgentState) -> dict:
     return {"analysis": asdict(result), "node_timings": timings}
 
 
-def forecast_node(state: ForexAgentState) -> dict:
+async def forecast_node(state: ForexAgentState) -> dict:
     logger.info(
         "node_start | node=forecast | input={points:%s,days:%s,latest:%.6f}",
         len(state["history_records"]),
@@ -131,10 +133,8 @@ def forecast_node(state: ForexAgentState) -> dict:
 
     def _extract_trend(text: str) -> str:
         t = (text or "").strip().lower()
-        # 精确词优先
         if t in {"up", "down", "sideways"}:
             return t
-        # 兼容含额外文本的返回
         if re.search(r"\bup\b|上涨|上升|看涨", t):
             return "up"
         if re.search(r"\bdown\b|下跌|下降|看跌", t):
@@ -142,7 +142,7 @@ def forecast_node(state: ForexAgentState) -> dict:
         return "sideways"
 
     try:
-        decision_raw = llm_client.generate(
+        decision_raw = await llm_client.agenerate(
             prompt=llm_prompt,
             system_prompt="你是严谨决策器，只返回 up/down/sideways 之一。",
         )
@@ -160,7 +160,8 @@ def forecast_node(state: ForexAgentState) -> dict:
             decision_raw.strip()[:80],
         )
 
-        tool_result = analysis_service.forecast(
+        tool_result = await asyncio.to_thread(
+            analysis_service.forecast,
             history_records=history_records,
             days=forecast_days,
             model_type=selected_model,
@@ -176,7 +177,8 @@ def forecast_node(state: ForexAgentState) -> dict:
         }
     except Exception as exc:
         logger.warning("forecast_llm_decision_failed | reason=%s", exc)
-        fallback = analysis_service.forecast(
+        fallback = await asyncio.to_thread(
+            analysis_service.forecast,
             history_records=history_records,
             days=forecast_days,
             model_type="linear",
@@ -221,7 +223,7 @@ def _build_data_block(state: ForexAgentState) -> str:
     )
 
 
-def report_node(state: ForexAgentState) -> dict:
+async def report_node(state: ForexAgentState) -> dict:
     logger.info(
         "node_start | node=report | input={method:%s,trend:%s,last:%.6f}",
         state["forecast"].get("method", "na"),
@@ -245,44 +247,47 @@ def report_node(state: ForexAgentState) -> dict:
         f"Include: 1) Current trend interpretation 2) Future trend forecast 3) Risk disclaimer (not investment advice)"
     )
 
-    report_zh = ""
-    report_en = ""
+    async def _gen_zh() -> str:
+        try:
+            text = await llm_client.agenerate(
+                prompt=prompt_zh,
+                system_prompt="你是谨慎、专业的外汇分析助手。",
+            )
+            if not text or not text.strip():
+                raise ValueError("LLM 中文报告为空。")
+            return text
+        except Exception as exc:
+            logger.warning("report_llm_zh_failed | reason=%s", exc)
+            return (
+                "大模型调用失败，已返回规则化摘要：\n\n"
+                f"- 当前汇率：{state['realtime_rate']:.6f}（{state['realtime_date']}）\n"
+                f"- 区间涨跌幅：{a['return_pct']:+.2f}%\n"
+                f"- 趋势判断：{a['trend_label']}\n"
+                f"- 预测终值：{f['predicted_rates'][-1]:.6f}\n"
+                f"- 错误信息：{exc}"
+            )
 
-    try:
-        report_zh = llm_client.generate(
-            prompt=prompt_zh,
-            system_prompt="你是谨慎、专业的外汇分析助手。",
-        )
-        if not report_zh or not report_zh.strip():
-            raise ValueError("LLM 中文报告为空。")
-    except Exception as exc:
-        logger.warning("report_llm_zh_failed | reason=%s", exc)
-        report_zh = (
-            "大模型调用失败，已返回规则化摘要：\n\n"
-            f"- 当前汇率：{state['realtime_rate']:.6f}（{state['realtime_date']}）\n"
-            f"- 区间涨跌幅：{a['return_pct']:+.2f}%\n"
-            f"- 趋势判断：{a['trend_label']}\n"
-            f"- 预测终值：{f['predicted_rates'][-1]:.6f}\n"
-            f"- 错误信息：{exc}"
-        )
+    async def _gen_en() -> str:
+        try:
+            text = await llm_client.agenerate(
+                prompt=prompt_en,
+                system_prompt="You are a cautious, professional forex analysis assistant.",
+            )
+            if not text or not text.strip():
+                raise ValueError("LLM English report is empty.")
+            return text
+        except Exception as exc:
+            logger.warning("report_llm_en_failed | reason=%s", exc)
+            return (
+                "LLM call failed. Rule-based summary:\n\n"
+                f"- Current rate: {state['realtime_rate']:.6f} ({state['realtime_date']})\n"
+                f"- Period return: {a['return_pct']:+.2f}%\n"
+                f"- Trend: {a['trend_label']}\n"
+                f"- Forecast final: {f['predicted_rates'][-1]:.6f}\n"
+                f"- Error: {exc}"
+            )
 
-    try:
-        report_en = llm_client.generate(
-            prompt=prompt_en,
-            system_prompt="You are a cautious, professional forex analysis assistant.",
-        )
-        if not report_en or not report_en.strip():
-            raise ValueError("LLM English report is empty.")
-    except Exception as exc:
-        logger.warning("report_llm_en_failed | reason=%s", exc)
-        report_en = (
-            "LLM call failed. Rule-based summary:\n\n"
-            f"- Current rate: {state['realtime_rate']:.6f} ({state['realtime_date']})\n"
-            f"- Period return: {a['return_pct']:+.2f}%\n"
-            f"- Trend: {a['trend_label']}\n"
-            f"- Forecast final: {f['predicted_rates'][-1]:.6f}\n"
-            f"- Error: {exc}"
-        )
+    report_zh, report_en = await asyncio.gather(_gen_zh(), _gen_en())
 
     elapsed = time.perf_counter() - t0
     timings = dict(state.get("node_timings") or {})

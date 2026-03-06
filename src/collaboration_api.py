@@ -1,10 +1,10 @@
 """
-智能体协作接口（对外暴露）
-=========================
-本模块用于给“其他智能体”调用本外汇智能体能力，属于 in-process SDK 接口。
+智能体协作接口（异步版）
+========================
+本模块用于给"其他智能体"调用本外汇智能体能力，属于 in-process SDK 接口。
 
 典型协作场景：
-- 客服智能体：询问“美元兑人民币近期走势如何？”
+- 客服智能体：询问"美元兑人民币近期走势如何？"
 - 投研智能体：拿结构化预测结果做下游决策
 - 报警智能体：定时读取实时汇率并触发阈值告警
 """
@@ -46,7 +46,7 @@ class ForexRunResponse(TypedDict):
 
 class ForexAgentCollaborationAPI:
     """
-    对外协作 API。
+    对外协作 API（异步版）。
     其他智能体不需要了解 LangGraph 细节，只要调用本类方法即可。
     """
 
@@ -58,10 +58,8 @@ class ForexAgentCollaborationAPI:
     def _is_same_currency(base: str, target: str) -> bool:
         return base.upper() == target.upper()
 
-    def get_realtime_quote(self, base_currency: str, target_currency: str) -> dict[str, Any]:
-        """
-        面向其他智能体的轻量接口：只取实时汇率。
-        """
+    async def get_realtime_quote(self, base_currency: str, target_currency: str) -> dict[str, Any]:
+        """面向其他智能体的轻量接口：只取实时汇率。"""
         logger.info(
             "collab_call | method=get_realtime_quote | base=%s | target=%s",
             base_currency,
@@ -76,7 +74,9 @@ class ForexAgentCollaborationAPI:
                 "rate": 1.0,
                 "date": date.today().isoformat(),
             }
-        quote = self._forex_service.get_realtime_quote(base_currency=base_currency, target_currency=target_currency)
+        quote = await self._forex_service.get_realtime_quote(
+            base_currency=base_currency, target_currency=target_currency,
+        )
         return {
             "base_currency": base_currency,
             "target_currency": target_currency,
@@ -147,10 +147,8 @@ class ForexAgentCollaborationAPI:
             "error": "",
         }
 
-    def run_full_analysis(self, request: ForexRunRequest) -> ForexRunResponse:
-        """
-        面向其他智能体的完整分析接口（实时 + 历史分析 + 趋势预测 + 报告）。
-        """
+    async def run_full_analysis(self, request: ForexRunRequest) -> ForexRunResponse:
+        """面向其他智能体的完整分析接口（实时 + 历史分析 + 趋势预测 + 报告）。"""
         base = request.get("base_currency", "USD").upper()
         target = request.get("target_currency", "CNY").upper()
         history_days = int(request.get("history_days", 90))
@@ -170,7 +168,7 @@ class ForexAgentCollaborationAPI:
             return self._build_same_currency_response(base, target, history_days, forecast_days, request)
 
         try:
-            result = self._graph.invoke(
+            result = await self._graph.ainvoke(
                 {
                     "base_currency": base,
                     "target_currency": target,
@@ -220,13 +218,9 @@ class ForexAgentCollaborationAPI:
                 "error": str(exc),
             }
 
-    def build_customer_agent_context(self, request: ForexRunRequest) -> dict[str, Any]:
-        """
-        给“客服智能体”提供标准上下文：
-        - user_facing_summary: 客服可直接复述
-        - structured_payload: 客服可做二次加工
-        """
-        result = self.run_full_analysis(request)
+    async def build_customer_agent_context(self, request: ForexRunRequest) -> dict[str, Any]:
+        """给"客服智能体"提供标准上下文。"""
+        result = await self.run_full_analysis(request)
         if not result["ok"]:
             return {
                 "ok": False,
@@ -250,4 +244,3 @@ class ForexAgentCollaborationAPI:
 
 # 便于其他模块直接 import 使用的默认实例
 forex_collab_api = ForexAgentCollaborationAPI()
-
