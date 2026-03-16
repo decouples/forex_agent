@@ -1,4 +1,10 @@
 # 外汇智能体工程（LangGraph + LLM 决策 + 跨工程协作）
+> 历史汇率分析，未来预测，实时汇率查看的智能体
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10+-green.svg)](https://python.org)
+[![Vue](https://img.shields.io/badge/Vue-3.x-brightgreen.svg)](https://vuejs.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-teal.svg)](https://fastapi.tiangolo.com)
 
 ## 工程背景
 
